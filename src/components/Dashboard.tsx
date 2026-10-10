@@ -167,9 +167,9 @@ export function Dashboard({
 
   const doCheckIn = async (slot: DoseSlot, medicine: Medicine, schedule: PhaseSchedule) => {
     try {
-      const { warning } = await checkInDose(slot, medicine, schedule, userId);
+      const { warning, updatedSlot } = await checkInDose(slot, medicine, schedule, userId);
       playSelectedTone();
-      sendLocalNotification('Dose Checked In', `${medicine.name} - Dose ${slot.dose_number} taken at ${formatTime(slot.taken_at || slot.scheduled_time)}`);
+      sendLocalNotification('Dose Checked In', `${medicine.name} - Dose ${slot.dose_number} taken at ${formatTime(updatedSlot.taken_at || updatedSlot.scheduled_time)}`);
       showToast('Dose checked in', 'success');
       if (warning) showToast(warning, 'error');
       onRefresh();
@@ -689,7 +689,14 @@ function TimelineNode({
       <div className="flex-1 min-w-0">
         {/* Time + Dose Number */}
         <div className="flex items-baseline gap-1.5 flex-wrap">
-          <span className="text-xs font-bold text-slate-700 tabular-nums">{formatTime(slot.scheduled_time)}</span>
+          <span className="text-xs font-bold text-slate-700 tabular-nums">
+            {isTaken && slot.taken_at ? formatTime(slot.taken_at) : formatTime(slot.scheduled_time)}
+          </span>
+          {isTaken && slot.taken_at && slot.taken_at !== slot.scheduled_time && (
+            <span className="text-[9px] text-slate-400 font-medium line-through tabular-nums">
+              {formatTime(slot.scheduled_time)}
+            </span>
+          )}
           <span className="text-[10px] text-slate-400 font-medium">{doseNumberOfTotal}</span>
           {slot.delay_text && (
             <span className="text-[9px] font-medium text-amber-600 bg-amber-50 px-1 py-0.5 rounded">

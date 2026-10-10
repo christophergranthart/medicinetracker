@@ -171,10 +171,12 @@ export function recalculateRemainingSlots(
   if (remaining === 0) return [];
 
   const window = latest - lastTakenTime;
-  const equalGap = remaining > 0 ? window / (remaining + 1) : 0;
+  // Evenly distribute remaining doses across the window from last taken time to cutoff.
+  // Use remaining (not remaining+1) so doses span the full window, not leaving a trailing gap.
+  const equalGap = remaining > 0 ? window / remaining : 0;
   // Backward planning: prioritize fitting all remaining doses before cutoff.
   // Flex below min interval if equal spacing is tighter than the minimum.
-  const fitsWithMinInterval = (lastTakenTime + (remaining + 1) * minIntervalMins) <= latest;
+  const fitsWithMinInterval = (lastTakenTime + remaining * minIntervalMins) <= latest;
   const requiredGap = fitsWithMinInterval ? Math.max(equalGap, minIntervalMins) : equalGap;
   const gapClamped = !fitsWithMinInterval;
 

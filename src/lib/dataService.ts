@@ -267,7 +267,7 @@ export async function ensureDailyLog(
         log,
         slots: (newSlots || []) as DoseSlot[],
         schedule,
-        warning: initialSlots.some((s) => s.clamped) ? 'Cutoff reached. Required spacing exceeds latest allowed time.' : null,
+        warning: initialSlots.some((s) => s.clamped) ? 'Cutoff reached. Doses spaced equally to fit before cutoff.' : null,
       };
     }
 
@@ -359,7 +359,7 @@ export async function checkInDose(
       if (origSlot) {
         updateData.delay_text = getDelayText(origSlot.original_time, update.newTime);
       }
-      if (update.clamped) warning = 'Cutoff reached. Required spacing exceeds latest allowed time.';
+      if (update.clamped) warning = 'Cutoff reached. Doses spaced equally to fit before cutoff.';
       await supabase.from('dose_slots').update(updateData).eq('id', update.id);
     }
   }
@@ -468,7 +468,7 @@ export async function delayDoseSlot(
 
   return {
     updatedSlot: updated as DoseSlot,
-    warning: result.clamped ? 'Cutoff reached. Required spacing exceeds latest allowed time.' : null,
+    warning: result.clamped ? 'Cutoff reached. Dose moved to latest allowed time.' : null,
   };
 }
 
@@ -715,9 +715,9 @@ export async function startDayForMedicine(
     const minIntervalMins = (medicine.min_interval_hours || 3) * 60;
     const firstDoseMin = parseTimeToMinutes(now);
     const window = latest - firstDoseMin;
-    const equalGap = remainingCount > 0 ? window / (remainingCount + 1) : 0;
+    const equalGap = remainingCount > 0 ? window / remainingCount : 0;
     // Backward planning: flex below min interval to fit all doses before cutoff
-    const fitsWithMinInterval = (firstDoseMin + (remainingCount + 1) * minIntervalMins) <= latest;
+    const fitsWithMinInterval = (firstDoseMin + remainingCount * minIntervalMins) <= latest;
     const requiredGap = fitsWithMinInterval ? Math.max(equalGap, minIntervalMins) : equalGap;
     const gapClamped = !fitsWithMinInterval;
 
@@ -966,7 +966,7 @@ export async function editDoseLog(
       if (origSlot) {
         updateData.delay_text = getDelayText(origSlot.original_time, update.newTime);
       }
-      if (update.clamped) warning = 'Cutoff reached. Required spacing exceeds latest allowed time.';
+      if (update.clamped) warning = 'Cutoff reached. Doses spaced equally to fit before cutoff.';
       await supabase.from('dose_slots').update(updateData).eq('id', update.id);
     }
   }
