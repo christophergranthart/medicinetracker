@@ -83,7 +83,7 @@ export function SettingsView({ onSignOut }: SettingsViewProps) {
           </div>
           <ToggleSwitch
             checked={settings.enabled}
-            onChange={(v) => updateSettings({ enabled: v })}
+            onChange={() => updateSettings({ enabled: !settings.enabled })}
           />
         </div>
 

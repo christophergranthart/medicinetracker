@@ -372,18 +372,30 @@ export async function checkInDose(
   }
 
   await cascadeOtherMeds(medicine, updatedSlot);
+  await recascadeDependents(medicine, log.date);
 
   return { updatedSlot, warning };
 }
 
 async function cascadeOtherMeds(medicine: Medicine, checkedInSlot: DoseSlot): Promise<void> {
+  const logDate = checkedInSlot.daily_log_id ? await getLogDate(checkedInSlot.daily_log_id) : todayStr();
+
   const { data: logs } = await supabase
     .from('daily_med_logs')
     .select('id, medicine_id')
-    .eq('date', checkedInSlot.daily_log_id ? await getLogDate(checkedInSlot.daily_log_id) : todayStr());
+    .eq('date', logDate);
   if (!logs) return;
 
-  const otherLogIds = (logs || []).filter((l) => l.medicine_id !== medicine.id).map((l) => l.id);
+  const { data: allMeds } = await supabase.from('medicines').select('id, depends_on_medicine_id').eq('is_archived', false);
+  const dependentIds = new Set(
+    (allMeds || [])
+      .filter((m: Record<string, unknown>) => m.depends_on_medicine_id === medicine.id)
+      .map((m: Record<string, unknown>) => m.id as string)
+  );
+
+  const otherLogIds = (logs || [])
+    .filter((l) => l.medicine_id !== medicine.id && !dependentIds.has(l.medicine_id))
+    .map((l) => l.id);
   if (otherLogIds.length === 0) return;
 
   const { data: otherSlots } = await supabase
@@ -745,6 +757,13 @@ async function cascadeActivateDependents(
   parentFirstDoseTime: string,
   date: string
 ): Promise<void> {
+  await recascadeDependents(parentMedicine, date);
+}
+
+async function recascadeDependents(
+  parentMedicine: Medicine,
+  date: string
+): Promise<void> {
   const { data: allMeds } = await supabase
     .from('medicines')
     .select('*')
@@ -752,12 +771,15 @@ async function cascadeActivateDependents(
 
   if (!allMeds) return;
 
-  const dependents = allMeds.filter((m: Record<string, unknown>) => m.depends_on_medicine_id === parentMedicine.id);
+  const dependents = allMeds.filter(
+    (m: Record<string, unknown>) => m.depends_on_medicine_id === parentMedicine.id
+  );
   if (dependents.length === 0) return;
 
-  const gapMins = parentMedicine.min_gap_after_prerequisite_mins || 60;
-  const parentDoseMin = parseTimeToMinutes(parentFirstDoseTime);
-  const dependentStart = parentDoseMin + gapMins;
+  const parentLog = await fetchDailyLog(parentMedicine.id, date);
+  if (!parentLog) return;
+  const parentSlots = await fetchDoseSlots(parentLog.id);
+  const parentDoses = parentSlots.filter((s) => s.status === 'taken' || s.status === 'pending');
 
   for (const depRaw of dependents) {
     const dep = normalizeMedicine(depRaw as Record<string, unknown>);
@@ -767,111 +789,56 @@ async function cascadeActivateDependents(
     const existingDepSlots = await fetchDoseSlots(depLog.id);
     if (existingDepSlots.some((s) => s.status === 'taken')) continue;
 
+    const gapMins = dep.min_gap_after_prerequisite_mins || 30;
     const depLatest = parseTimeToMinutes(dep.latest_allowed);
     const depEarliest = parseTimeToMinutes(dep.earliest_allowed);
-    const effectiveStart = Math.max(depEarliest, dependentStart);
-
-    if (dep.start_trigger_mode === 'dynamic_first_checkin' && existingDepSlots.length === 0) {
-      const depSchedules = await fetchPhaseSchedules(dep.id);
-      const depSchedule = depSchedules.find((s) => date >= s.start_date && date <= s.end_date);
-      if (!depSchedule) continue;
-
-      const depCount = depSchedule.times_per_day;
-
-      if (effectiveStart > depLatest) {
-        const timeStr = minutesToTimeStrForExport(depLatest);
-        await supabase.from('dose_slots').insert({
-          daily_log_id: depLog.id,
-          medicine_id: dep.id,
-          dose_number: 1,
-          scheduled_time: timeStr,
-          original_time: timeStr,
-          status: 'pending',
-          taken_at: null,
-          is_anchored: false,
-          is_custom_added: false,
-          delay_text: `After ${parentMedicine.name}`,
-        });
-        continue;
-      }
-
-      const depMinInterval = (dep.min_interval_hours || 3) * 60;
-      const depWindow = depLatest - effectiveStart;
-      const depGap = depCount > 1 ? depWindow / (depCount - 1) : 0;
-      const depActualGap = Math.max(depGap, depMinInterval);
-
-      const depInserts: Record<string, unknown>[] = [];
-      for (let i = 0; i < depCount; i++) {
-        const proposed = effectiveStart + i * depActualGap;
-        const clamped = proposed > depLatest;
-        const slotTime = clamped ? depLatest : proposed;
-        depInserts.push({
-          daily_log_id: depLog.id,
-          medicine_id: dep.id,
-          dose_number: i + 1,
-          scheduled_time: minutesToTimeStrForExport(slotTime),
-          original_time: minutesToTimeStrForExport(slotTime),
-          status: 'pending',
-          taken_at: null,
-          is_anchored: false,
-          is_custom_added: false,
-          delay_text: i === 0 ? `After ${parentMedicine.name}` : null,
-        });
-      }
-
-      if (depInserts.length > 0) {
-        const { error } = await supabase.from('dose_slots').insert(depInserts);
-        if (error) throw error;
-      }
-      continue;
-    }
-
-    await supabase.from('dose_slots').delete().eq('daily_log_id', depLog.id);
+    const depMinInterval = (dep.min_interval_hours || 3) * 60;
 
     const depSchedules = await fetchPhaseSchedules(dep.id);
     const depSchedule = depSchedules.find((s) => date >= s.start_date && date <= s.end_date);
     if (!depSchedule) continue;
 
-    if (effectiveStart > depLatest) {
-      const timeStr = minutesToTimeStrForExport(depLatest);
-      await supabase.from('dose_slots').insert({
+    const depCount = depSchedule.times_per_day;
+
+    await supabase.from('dose_slots').delete().eq('daily_log_id', depLog.id);
+
+    const depInserts: Record<string, unknown>[] = [];
+    let lastDepTime = depEarliest;
+
+    for (let i = 0; i < depCount; i++) {
+      const parentDose = parentDoses[i];
+      let proposed: number;
+
+      if (parentDose) {
+        const parentTime = parseTimeToMinutes(
+          parentDose.taken_at || parentDose.scheduled_time
+        );
+        proposed = parentTime + gapMins;
+      } else {
+        proposed = lastDepTime + depMinInterval;
+      }
+
+      proposed = Math.max(proposed, depEarliest);
+      proposed = Math.max(proposed, lastDepTime + (i > 0 ? depMinInterval : 0));
+
+      const clamped = proposed > depLatest;
+      const slotTime = clamped ? depLatest : proposed;
+
+      const timeStr = minutesToTimeStrForExport(slotTime);
+      depInserts.push({
         daily_log_id: depLog.id,
         medicine_id: dep.id,
-        dose_number: 1,
+        dose_number: i + 1,
         scheduled_time: timeStr,
         original_time: timeStr,
         status: 'pending',
         taken_at: null,
         is_anchored: false,
         is_custom_added: false,
-        delay_text: `Scheduled after ${parentMedicine.name}`,
+        delay_text: `After ${parentMedicine.name}`,
       });
-      continue;
-    }
 
-    const depCount = depSchedule.times_per_day;
-    const depMinInterval = (dep.min_interval_hours || 3) * 60;
-    const depWindow = depLatest - effectiveStart;
-    const depGap = depCount > 1 ? depWindow / (depCount - 1) : 0;
-    const depActualGap = Math.max(depGap, depMinInterval);
-
-    const depInserts: Record<string, unknown>[] = [];
-    for (let i = 0; i < depCount; i++) {
-      const proposed = effectiveStart + i * depActualGap;
-      const clamped = proposed > depLatest;
-      const slotTime = clamped ? depLatest : proposed;
-      depInserts.push({
-        daily_log_id: depLog.id,
-        medicine_id: dep.id,
-        dose_number: i + 1,
-        scheduled_time: minutesToTimeStrForExport(slotTime),
-        original_time: minutesToTimeStrForExport(slotTime),
-        status: 'pending',
-        taken_at: null,
-        is_anchored: false,
-        is_custom_added: false,
-        delay_text: i === 0 ? `After ${parentMedicine.name}` : null,
-      });
+      lastDepTime = slotTime;
     }
 
     if (depInserts.length > 0) {

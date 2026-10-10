@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Clock, CircleCheck as CheckCircle2, Circle as XCircle, Pill, Calendar, TrendingUp } from 'lucide-react';
 import type { Medicine, DailyMedLog, DoseSlot } from '@/types';
 import { fetchHistoryLogs, fetchAllDoseSlotsForLogIds, fetchAllMedicines } from '@/lib/dataService';
-import { formatDateShort } from '@/lib/timeUtils';
+import { formatDateShort, formatTime } from '@/lib/timeUtils';
 
 interface HistoryViewProps {
   onRefresh?: () => void;
@@ -59,8 +59,8 @@ export function HistoryView({ }: HistoryViewProps) {
   const getMedName = (id: string) => medicines.find((m) => m.id === id)?.name || 'Unknown';
 
   return (
-    <div className="max-w-2xl mx-auto px-4 pt-5 pb-28">
-      <div className="flex items-center gap-3 mb-5">
+    <div className="max-w-2xl mx-auto px-2.5 pt-3 pb-28">
+      <div className="flex items-center gap-2.5 mb-3">
         <div className="w-10 h-10 bg-gradient-to-br from-med-50 to-teal-50 rounded-xl flex items-center justify-center">
           <TrendingUp className="w-5 h-5 text-med-600" />
         </div>
@@ -85,7 +85,7 @@ export function HistoryView({ }: HistoryViewProps) {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {history.map((group) => {
             const allSlots = group.logs.flatMap((l) => group.slotMap[l.id] || []);
             const taken = allSlots.filter((s) => s.status === 'taken').length;
@@ -96,7 +96,7 @@ export function HistoryView({ }: HistoryViewProps) {
               <div key={group.date} className="card overflow-hidden animate-slide-up">
                 {/* Date Header */}
                 <div
-                  className="px-4 py-3 flex items-center justify-between"
+                  className="px-3 py-2 flex items-center justify-between"
                   style={{ background: 'linear-gradient(135deg, #0f766e 0%, #0891b2 100%)' }}
                 >
                   <div className="flex items-center gap-2">
@@ -119,7 +119,7 @@ export function HistoryView({ }: HistoryViewProps) {
                     const isSkipped = log.status === 'skipped';
 
                     return (
-                      <div key={log.id} className="px-4 py-3">
+                      <div key={log.id} className="px-3 py-2">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2.5 min-w-0">
                             <div className="w-8 h-8 bg-gradient-to-br from-med-50 to-teal-50 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -151,7 +151,7 @@ export function HistoryView({ }: HistoryViewProps) {
 
                         {/* Slot details */}
                         {slots.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mt-2.5 pl-10">
+                          <div className="flex flex-wrap gap-1 mt-2 pl-9">
                             {slots.map((slot) => (
                               <span
                                 key={slot.id}
@@ -163,8 +163,8 @@ export function HistoryView({ }: HistoryViewProps) {
                                     : 'bg-amber-50 text-amber-600'
                                 }`}
                               >
-                                {slot.scheduled_time}
-                                {slot.taken_at && slot.taken_at !== slot.scheduled_time && ` \u2192 ${slot.taken_at}`}
+                                {formatTime(slot.scheduled_time)}
+                                {slot.taken_at && slot.taken_at !== slot.scheduled_time && ` \u2192 ${formatTime(slot.taken_at)}`}
                               </span>
                             ))}
                           </div>
