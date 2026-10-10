@@ -318,6 +318,3 @@ function ToggleSwitch({
     </button>
   );
 }
-
-
-export { SettingsView }
