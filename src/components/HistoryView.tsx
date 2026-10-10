@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Clock, CheckCircle2, XCircle, Pill, Calendar, TrendingUp } from 'lucide-react';
+import { Clock, CircleCheck as CheckCircle2, Circle as XCircle, Pill, Calendar, TrendingUp } from 'lucide-react';
 import type { Medicine, DailyMedLog, DoseSlot } from '@/types';
 import { fetchHistoryLogs, fetchAllDoseSlotsForLogIds, fetchAllMedicines } from '@/lib/dataService';
 import { formatDateShort } from '@/lib/timeUtils';

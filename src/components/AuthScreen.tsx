@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { HeartPulse, Mail, Lock, AlertCircle, ShieldCheck } from 'lucide-react';
+import { HeartPulse, Mail, Lock, CircleAlert as AlertCircle, ShieldCheck } from 'lucide-react';
 
 function GoogleIcon({ className }: { className?: string }) {
   return (

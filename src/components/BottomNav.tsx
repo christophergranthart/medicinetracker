@@ -1,4 +1,4 @@
-import { Home, Clock, Pill, Settings } from 'lucide-react';
+import { Chrome as Home, Clock, Pill, Settings } from 'lucide-react';
 
 export type NavView = 'home' | 'history' | 'medicines' | 'settings';
 

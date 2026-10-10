@@ -1,22 +1,5 @@
 import { useState, useEffect } from 'react';
-import {
-  Pill,
-  ChevronRight,
-  ChevronLeft,
-  Plus,
-  Trash2,
-  Lock,
-  Anchor,
-  Archive,
-  AlertTriangle,
-  Clock,
-  Ban,
-  Calendar,
-  ListOrdered,
-  GitBranch,
-  Rocket,
-  CalendarDays,
-} from 'lucide-react';
+import { Pill, ChevronRight, ChevronLeft, Plus, Trash2, Lock, Anchor, Archive, TriangleAlert as AlertTriangle, Clock, Ban, Calendar, ListOrdered, GitBranch, Rocket, CalendarDays } from 'lucide-react';
 import type {
   Medicine,
   PhaseSchedule,

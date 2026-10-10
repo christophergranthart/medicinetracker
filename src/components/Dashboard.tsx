@@ -1,24 +1,5 @@
 import { useState, useMemo } from 'react';
-import {
-  Pill,
-  Calendar,
-  CheckCircle2,
-  Clock,
-  AlertTriangle,
-  RotateCcw,
-  Check,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Pencil,
-  Ban,
-  ListOrdered,
-  GitBranch,
-  Rocket,
-  X,
-  Trash2,
-  Tablets,
-} from 'lucide-react';
+import { Pill, Calendar, CircleCheck as CheckCircle2, Clock, TriangleAlert as AlertTriangle, RotateCcw, Check, ChevronDown, ChevronLeft, ChevronRight, Pencil, Ban, ListOrdered, GitBranch, Rocket, X, Trash2, Tablets } from 'lucide-react';
 import type { Medicine, PhaseSchedule, DoseSlot, DailyMedLog } from '@/types';
 import {
   checkInDose,
