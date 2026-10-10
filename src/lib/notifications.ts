@@ -49,35 +49,77 @@ export function saveNotifSettings(settings: NotifSettings): void {
 }
 
 let audioCtx: AudioContext | null = null;
+let unlocked = false;
+
+function getAudioContextConstructor(): typeof AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  return (
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext ||
+    null
+  );
+}
 
 function getAudioContext(): AudioContext | null {
-  if (typeof window === 'undefined') return null;
+  const Ctx = getAudioContextConstructor();
+  if (!Ctx) return null;
   if (!audioCtx) {
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return null;
     audioCtx = new Ctx();
-  }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume().catch(() => {});
   }
   return audioCtx;
 }
 
-export function playTone(tone: SoundToneId, volume: number = 0.6): void {
+// Resume AudioContext synchronously — must be called inside a user-gesture handler.
+async function resumeAudioContext(): Promise<AudioContext | null> {
   const ctx = getAudioContext();
-  if (!ctx) return;
+  if (!ctx) return null;
+  if (ctx.state === 'suspended') {
+    try {
+      await ctx.resume();
+    } catch {
+      // ignore
+    }
+  }
+  return ctx;
+}
 
-  const now = ctx.currentTime;
-  const vol = Math.max(0, Math.min(1, volume));
+// Global unlock: on the very first user interaction, warm up the AudioContext so
+// subsequent playback (including notification sounds) is allowed on Android Chrome.
+function installAudioUnlockListener() {
+  if (typeof window === 'undefined' || unlocked) return;
 
-  const tones: Record<SoundToneId, { freqs: number[]; duration: number; gap: number; type: OscillatorType }> = {
-    gentle_chime: { freqs: [880, 1108.73, 1318.51], duration: 0.4, gap: 0.12, type: 'sine' },
-    digital_alarm: { freqs: [1000, 1000, 1000], duration: 0.15, gap: 0.08, type: 'square' },
-    bell_notification: { freqs: [659.25, 987.77], duration: 0.5, gap: 0.15, type: 'triangle' },
-    crisp_beep: { freqs: [1200], duration: 0.12, gap: 0, type: 'sine' },
+  const unlock = async () => {
+    if (unlocked) return;
+    unlocked = true;
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      try { await ctx.resume(); } catch { /* ignore */ }
+    }
+    window.removeEventListener('touchstart', unlock, true);
+    window.removeEventListener('touchend', unlock, true);
+    window.removeEventListener('click', unlock, true);
+    window.removeEventListener('keydown', unlock, true);
   };
 
-  const cfg = tones[tone];
+  window.addEventListener('touchstart', unlock, { capture: true, passive: true });
+  window.addEventListener('touchend', unlock, { capture: true, passive: true });
+  window.addEventListener('click', unlock, { capture: true, passive: true });
+  window.addEventListener('keydown', unlock, { capture: true, passive: true });
+}
+
+installAudioUnlockListener();
+
+const TONE_CONFIGS: Record<SoundToneId, { freqs: number[]; duration: number; gap: number; type: OscillatorType }> = {
+  gentle_chime:     { freqs: [880, 1108.73, 1318.51], duration: 0.4,  gap: 0.12, type: 'sine'     },
+  digital_alarm:    { freqs: [1000, 1000, 1000],       duration: 0.15, gap: 0.08, type: 'square'   },
+  bell_notification:{ freqs: [659.25, 987.77],         duration: 0.5,  gap: 0.15, type: 'triangle' },
+  crisp_beep:       { freqs: [1200],                   duration: 0.12, gap: 0,    type: 'sine'     },
+};
+
+function scheduleTone(ctx: AudioContext, tone: SoundToneId, volume: number) {
+  const cfg = TONE_CONFIGS[tone];
+  const vol = Math.max(0, Math.min(1, volume));
+  const now = ctx.currentTime;
   let offset = 0;
 
   for (const freq of cfg.freqs) {
@@ -101,10 +143,17 @@ export function playTone(tone: SoundToneId, volume: number = 0.6): void {
   }
 }
 
-export function playSelectedTone(): void {
+// Call this directly inside a click handler to guarantee Android Chrome allows audio.
+export async function playTone(tone: SoundToneId, volume: number = 0.6): Promise<void> {
+  const ctx = await resumeAudioContext();
+  if (!ctx) return;
+  scheduleTone(ctx, tone, volume);
+}
+
+export async function playSelectedTone(): Promise<void> {
   const settings = getNotifSettings();
   if (!settings.enabled) return;
-  playTone(settings.tone, settings.volume);
+  await playTone(settings.tone, settings.volume);
 }
 
 export async function requestPushPermission(): Promise<NotificationPermission> {

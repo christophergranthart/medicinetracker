@@ -2,12 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Settings as SettingsIcon,
   Bell,
+  BellOff,
   Volume2,
   Play,
   HeartPulse,
   Info,
   Check,
   X,
+  ShieldCheck,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   SOUND_TONES,
@@ -28,6 +31,7 @@ export function SettingsView({ onSignOut }: SettingsViewProps) {
   const [settings, setSettings] = useState<NotifSettings>(getNotifSettings());
   const [pushStatus, setPushStatus] = useState<NotificationPermission | 'unsupported'>(getPushPermissionStatus());
   const [requestingPush, setRequestingPush] = useState(false);
+  const [previewingTone, setPreviewingTone] = useState<SoundToneId | null>(null);
 
   useEffect(() => {
     setSettings(getNotifSettings());
@@ -40,20 +44,28 @@ export function SettingsView({ onSignOut }: SettingsViewProps) {
     saveNotifSettings(next);
   }, [settings]);
 
-  const handleTogglePush = async () => {
+  const handleEnableNotifications = async () => {
     if (pushStatus === 'unsupported') return;
     setRequestingPush(true);
     const result = await requestPushPermission();
     setPushStatus(result);
     if (result === 'granted') {
-      updateSettings({ pushEnabled: !settings.pushEnabled });
+      updateSettings({ pushEnabled: true });
     } else {
       updateSettings({ pushEnabled: false });
     }
     setRequestingPush(false);
   };
 
-  const pushToggleOn = settings.pushEnabled && pushStatus === 'granted';
+  const handlePreview = async (toneId: SoundToneId) => {
+    setPreviewingTone(toneId);
+    await playTone(toneId, settings.volume);
+    setTimeout(() => setPreviewingTone(null), 600);
+  };
+
+  const pushGranted = pushStatus === 'granted';
+  const pushDenied = pushStatus === 'denied';
+  const pushUnsupported = pushStatus === 'unsupported';
 
   return (
     <div className="max-w-2xl mx-auto px-4 pt-5 pb-28 space-y-4">
@@ -115,12 +127,16 @@ export function SettingsView({ onSignOut }: SettingsViewProps) {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    playTone(tone.id, settings.volume);
+                    handlePreview(tone.id);
                   }}
-                  className="flex items-center gap-1 text-xs font-medium text-med-600 bg-med-50 hover:bg-med-100 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+                  className={`flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors flex-shrink-0 ${
+                    previewingTone === tone.id
+                      ? 'bg-med-200 text-med-800'
+                      : 'text-med-600 bg-med-50 hover:bg-med-100'
+                  }`}
                 >
                   <Play className="w-3 h-3" />
-                  Preview
+                  {previewingTone === tone.id ? 'Playing…' : 'Preview'}
                 </button>
               </div>
             ))}
@@ -144,36 +160,83 @@ export function SettingsView({ onSignOut }: SettingsViewProps) {
           />
         </div>
 
-        {/* Push Notifications */}
+        {/* Lock Screen Alerts */}
         <div className="py-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <Bell className="w-4 h-4 text-med-600" />
-              <p className="text-sm font-medium text-slate-700">Push Notifications / Lock Screen Alerts</p>
-            </div>
-            <ToggleSwitch
-              checked={pushToggleOn}
-              disabled={pushStatus === 'unsupported' || (pushStatus === 'denied' && !requestingPush)}
-              onChange={handleTogglePush}
-            />
+          <div className="flex items-center gap-2 mb-3">
+            <Bell className="w-4 h-4 text-med-600" />
+            <p className="text-sm font-medium text-slate-700">Lock Screen Alerts</p>
           </div>
-          <div className="bg-med-50/40 rounded-xl p-3 mt-2">
-            <div className="flex items-start gap-2">
-              <Info className="w-3.5 h-3.5 text-med-500 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-slate-600 leading-relaxed">
-                To receive medication alerts while your phone screen is locked, enable push notifications for MedTracker.
-              </p>
-            </div>
+
+          {/* Status indicator */}
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl mb-3 ${
+            pushGranted
+              ? 'bg-emerald-50 border border-emerald-100'
+              : pushDenied
+                ? 'bg-amber-50 border border-amber-100'
+                : 'bg-slate-50 border border-slate-100'
+          }`}>
+            {pushGranted ? (
+              <>
+                <ShieldCheck className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                <span className="text-xs font-semibold text-emerald-700">Notifications Allowed</span>
+              </>
+            ) : pushDenied ? (
+              <>
+                <ShieldAlert className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                <span className="text-xs font-semibold text-amber-700">Notifications Blocked</span>
+              </>
+            ) : pushUnsupported ? (
+              <>
+                <BellOff className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                <span className="text-xs font-semibold text-slate-500">Not supported on this device</span>
+              </>
+            ) : (
+              <>
+                <Bell className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                <span className="text-xs font-semibold text-slate-500">Notifications not yet enabled</span>
+              </>
+            )}
           </div>
-          {pushStatus === 'denied' && (
-            <p className="text-xs text-amber-600 mt-2 font-medium">
-              Notifications are blocked in your browser settings. Please enable them manually.
+
+          {/* Enable button */}
+          {!pushUnsupported && !pushGranted && (
+            <button
+              onClick={handleEnableNotifications}
+              disabled={requestingPush || pushDenied}
+              className={`w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-all ${
+                pushDenied
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  : 'bg-med-600 text-white hover:bg-med-700 active:scale-[0.98]'
+              }`}
+            >
+              <Bell className="w-4 h-4" />
+              {requestingPush ? 'Requesting…' : 'Enable Lock Screen Alerts'}
+            </button>
+          )}
+
+          {pushDenied && (
+            <p className="text-xs text-amber-600 mt-2 leading-relaxed">
+              Notifications are blocked in your browser settings. Open your browser's site settings for this page and allow notifications, then reload.
             </p>
           )}
-          {pushStatus === 'unsupported' && (
-            <p className="text-xs text-slate-400 mt-2 font-medium">
-              Push notifications are not supported on this device.
-            </p>
+
+          {pushGranted && (
+            <div className="flex items-center justify-between mt-2">
+              <p className="text-xs text-slate-500">Receive alerts while screen is locked</p>
+              <ToggleSwitch
+                checked={settings.pushEnabled}
+                onChange={() => updateSettings({ pushEnabled: !settings.pushEnabled })}
+              />
+            </div>
+          )}
+
+          {!pushDenied && !pushGranted && !pushUnsupported && (
+            <div className="flex items-start gap-2 mt-3 bg-med-50/40 rounded-xl p-3">
+              <Info className="w-3.5 h-3.5 text-med-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Tap above to receive medication alerts even when your phone screen is locked.
+              </p>
+            </div>
           )}
         </div>
       </div>
@@ -255,3 +318,6 @@ function ToggleSwitch({
     </button>
   );
 }
+
+
+export { SettingsView }
