@@ -38,6 +38,11 @@ function getInterMedBuffer(medicine: Medicine, targetMedId: string): number {
   return medicine.inter_med_default_buffer_mins || 60;
 }
 
+function isDependencyPair(medicine: Medicine, otherMedId: string): boolean {
+  if (medicine.depends_on_medicine_id === otherMedId) return true;
+  return false;
+}
+
 function hasConflict(
   timeMinutes: number,
   medicine: Medicine,
@@ -46,6 +51,9 @@ function hasConflict(
   for (const slot of allOtherSlots) {
     if (slot.medicineId === medicine.id) continue;
     if (slot.status === 'taken' || slot.status === 'skipped') continue;
+
+    if (isDependencyPair(medicine, slot.medicineId)) continue;
+
     const buffer = getInterMedBuffer(medicine, slot.medicineId);
     const slotTime = parseTimeToMinutes(slot.scheduledTime);
     const diff = Math.abs(timeMinutes - slotTime);
@@ -215,6 +223,8 @@ export function cascadeShiftOtherMeds(
   for (const slot of allOtherPendingSlots) {
     if (slot.medicineId === medicine.id) continue;
     if (slot.status !== 'pending') continue;
+
+    if (isDependencyPair(medicine, slot.medicineId)) continue;
 
     const buffer = getInterMedBuffer(medicine, slot.medicineId);
     const slotTime = parseTimeToMinutes(slot.scheduledTime);

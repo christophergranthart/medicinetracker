@@ -393,8 +393,14 @@ async function cascadeOtherMeds(medicine: Medicine, checkedInSlot: DoseSlot): Pr
       .map((m: Record<string, unknown>) => m.id as string)
   );
 
+  const prerequisiteId = medicine.depends_on_medicine_id;
+
   const otherLogIds = (logs || [])
-    .filter((l) => l.medicine_id !== medicine.id && !dependentIds.has(l.medicine_id))
+    .filter((l) =>
+      l.medicine_id !== medicine.id &&
+      !dependentIds.has(l.medicine_id) &&
+      l.medicine_id !== prerequisiteId
+    )
     .map((l) => l.id);
   if (otherLogIds.length === 0) return;
 
@@ -457,6 +463,8 @@ export async function delayDoseSlot(
     .select()
     .single();
   if (error) throw error;
+
+  await recascadeDependents(medicine, logDate);
 
   return {
     updatedSlot: updated as DoseSlot,
@@ -948,6 +956,8 @@ export async function editDoseLog(
     }
   }
 
+  await recascadeDependents(medicine, log.date);
+
   const takenCount = allSlots.filter((s) => s.status === 'taken').length;
   if (action === 'revert_pending') {
     await supabase
@@ -1031,3 +1041,8 @@ export async function resetDayForAllMeds(
 }
 
 export { getDueStatus };
+
+
+export { fetchActiveMedicines, fetchAllPhaseSchedules, ensureDailyLog }
+
+export { checkInDose, delayDoseSlot, skipDoseSlot, checkPrerequisiteMet, startDayForMedicine, editDoseLog, resetDayForAllMeds }
