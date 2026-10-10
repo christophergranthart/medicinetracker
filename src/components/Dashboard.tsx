@@ -825,5 +825,3 @@ function convertTo24Hour(timeStr: string): string {
   }
   return cleaned;
 }
-
-export { Dashboard }
