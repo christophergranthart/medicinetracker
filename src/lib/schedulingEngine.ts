@@ -133,16 +133,19 @@ export function generateInitialSlots(
   }
 
   const window = latest - effectiveEarliest;
-  const gap = count > 1 ? window / (count - 1) : 0;
+  const equalGap = count > 1 ? window / (count - 1) : 0;
   const minIntervalMins = (medicine.min_interval_hours || 3) * 60;
-  const actualGap = Math.max(gap, minIntervalMins);
+  // Backward planning: if equal spacing is tighter than min interval, flex down
+  // to guarantee all doses fit before cutoff. Use min interval only when there's
+  // enough room (equalGap >= minInterval).
+  const actualGap = equalGap < minIntervalMins ? equalGap : minIntervalMins;
+  const clamped = equalGap < minIntervalMins && count > 1;
 
   const slots: { time: string; clamped: boolean }[] = [];
   for (let i = 0; i < count; i++) {
-    let proposed = effectiveEarliest + i * actualGap;
-    if (proposed > latest) proposed = latest;
+    const proposed = effectiveEarliest + i * actualGap;
     const resolved = resolveTime(proposed, medicine, allOtherSlots, latest);
-    slots.push({ time: minutesToTimeStr(resolved.time), clamped: resolved.clamped });
+    slots.push({ time: minutesToTimeStr(resolved.time), clamped: resolved.clamped || (clamped && i === count - 1) });
   }
   return slots;
 }
@@ -169,7 +172,11 @@ export function recalculateRemainingSlots(
 
   const window = latest - lastTakenTime;
   const equalGap = remaining > 0 ? window / (remaining + 1) : 0;
-  const requiredGap = Math.max(equalGap, minIntervalMins);
+  // Backward planning: prioritize fitting all remaining doses before cutoff.
+  // Flex below min interval if equal spacing is tighter than the minimum.
+  const fitsWithMinInterval = (lastTakenTime + (remaining + 1) * minIntervalMins) <= latest;
+  const requiredGap = fitsWithMinInterval ? Math.max(equalGap, minIntervalMins) : equalGap;
+  const gapClamped = !fitsWithMinInterval;
 
   const updates: { id: string; newTime: string; clamped: boolean }[] = [];
   let prevTime = lastTakenTime;
@@ -182,18 +189,10 @@ export function recalculateRemainingSlots(
       continue;
     }
 
-    let proposed = prevTime + requiredGap;
+    const proposed = prevTime + requiredGap;
     const resolved = resolveTime(proposed, medicine, allOtherSlots, latest);
-
-    const intraGap = resolved.time - prevTime;
-    if (intraGap < minIntervalMins && resolved.time < latest) {
-      const adjusted = resolveTime(prevTime + minIntervalMins, medicine, allOtherSlots, latest);
-      updates.push({ id: slot.id, newTime: minutesToTimeStr(adjusted.time), clamped: adjusted.clamped });
-      prevTime = adjusted.time;
-    } else {
-      updates.push({ id: slot.id, newTime: minutesToTimeStr(resolved.time), clamped: resolved.clamped });
-      prevTime = resolved.time;
-    }
+    updates.push({ id: slot.id, newTime: minutesToTimeStr(resolved.time), clamped: resolved.clamped || gapClamped });
+    prevTime = resolved.time;
   }
 
   return updates;

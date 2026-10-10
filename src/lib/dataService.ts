@@ -716,14 +716,17 @@ export async function startDayForMedicine(
     const firstDoseMin = parseTimeToMinutes(now);
     const window = latest - firstDoseMin;
     const equalGap = remainingCount > 0 ? window / (remainingCount + 1) : 0;
-    const requiredGap = Math.max(equalGap, minIntervalMins);
+    // Backward planning: flex below min interval to fit all doses before cutoff
+    const fitsWithMinInterval = (firstDoseMin + (remainingCount + 1) * minIntervalMins) <= latest;
+    const requiredGap = fitsWithMinInterval ? Math.max(equalGap, minIntervalMins) : equalGap;
+    const gapClamped = !fitsWithMinInterval;
 
     const slotInserts: Record<string, unknown>[] = [];
     let prevTime = firstDoseMin;
 
     for (let i = 0; i < remainingCount; i++) {
       const proposed = prevTime + requiredGap;
-      const clamped = proposed > latest;
+      const clamped = proposed > latest || (gapClamped && i === remainingCount - 1);
       const slotTime = clamped ? latest : proposed;
       const timeStr = minutesToTimeStrForExport(slotTime);
       slotInserts.push({
@@ -739,7 +742,7 @@ export async function startDayForMedicine(
         delay_text: null,
       });
       prevTime = slotTime;
-      if (clamped) warning = 'Cutoff reached. Required spacing exceeds latest allowed time.';
+      if (clamped || gapClamped) warning = 'Cutoff reached. Required spacing exceeds latest allowed time. Doses spaced equally to fit before cutoff.';
     }
 
     if (slotInserts.length > 0) {
@@ -811,6 +814,10 @@ async function recascadeDependents(
     await supabase.from('dose_slots').delete().eq('daily_log_id', depLog.id);
 
     const depInserts: Record<string, unknown>[] = [];
+
+    // Backward planning for dependents: if there's a parent dose to anchor to,
+    // use the gap after that parent dose. For remaining doses, equal-space them
+    // within the remaining window, flexing below min interval if needed.
     let lastDepTime = depEarliest;
 
     for (let i = 0; i < depCount; i++) {
@@ -823,11 +830,19 @@ async function recascadeDependents(
         );
         proposed = parentTime + gapMins;
       } else {
-        proposed = lastDepTime + depMinInterval;
+        // No matching parent dose — equal-space from last dep time
+        const remainingDeps = depCount - i;
+        const remainingWindow = depLatest - lastDepTime;
+        const equalDepGap = remainingDeps > 1 ? remainingWindow / remainingDeps : depMinInterval;
+        const fitsDep = (lastDepTime + remainingDeps * depMinInterval) <= depLatest;
+        const depGap = fitsDep ? Math.max(equalDepGap, depMinInterval) : equalDepGap;
+        proposed = lastDepTime + depGap;
       }
 
       proposed = Math.max(proposed, depEarliest);
-      proposed = Math.max(proposed, lastDepTime + (i > 0 ? depMinInterval : 0));
+      if (i > 0) {
+        proposed = Math.max(proposed, lastDepTime + 1);
+      }
 
       const clamped = proposed > depLatest;
       const slotTime = clamped ? depLatest : proposed;
