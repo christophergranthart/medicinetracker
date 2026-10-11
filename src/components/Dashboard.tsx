@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Pill, Calendar, CircleCheck as CheckCircle2, Clock, TriangleAlert as AlertTriangle, RotateCcw, Check, ChevronDown, ChevronLeft, ChevronRight, Pencil, Ban, ListOrdered, GitBranch, Rocket, X, Trash2, Tablets, ArrowUp, ArrowDown, Timer } from 'lucide-react';
+import { Pill, Calendar, CircleCheck as CheckCircle2, Clock, TriangleAlert as AlertTriangle, RotateCcw, Check, ChevronDown, ChevronLeft, ChevronRight, Pencil, Ban, Rocket, X, Trash2, Tablets, ArrowUp, ArrowDown, Timer } from 'lucide-react';
 import type { Medicine, PhaseSchedule, DoseSlot, DailyMedLog } from '@/types';
 import {
   checkInDose,
@@ -659,7 +659,7 @@ export function Dashboard({
               {timePicker.mode === 'edit_taken' && timePicker.slot && (
                 <p className="text-xs text-slate-500">
                   Dose #{timePicker.slot.dose_number} &middot; Scheduled at {formatTime(timePicker.slot.scheduled_time)}
-                  {timePicker.slot.taken_at && ` &middot; Logged at ${formatTime(timePicker.slot.taken_at)}`}
+                  {timePicker.slot.taken_at && ` &middot; Taken at ${formatTime(timePicker.slot.taken_at)}`}
                 </p>
               )}
             </div>
@@ -748,8 +748,6 @@ function TimelineNode({
   const isSkipped = slot.status === 'skipped';
   const isPending = slot.status === 'pending';
   const dueStatus = isPending ? getDueStatus(slot.scheduled_time) : null;
-
-  const lineColor = isTaken ? 'bg-emerald-400' : isPending ? 'bg-med-300' : 'bg-slate-200';
   const badgeBg = isTaken
     ? 'bg-emerald-500'
     : isSkipped
@@ -760,7 +758,7 @@ function TimelineNode({
 
   return (
     <div className="relative flex gap-2.5 pb-2.5">
-      {!isLast && <div className={`absolute left-[12px] top-7 bottom-0 w-0.5 ${lineColor}`} />}
+      {!isLast && <div className={`absolute left-[12px] top-7 bottom-0 w-0.5 ${isTaken ? 'bg-emerald-400' : isPending ? 'bg-med-300' : 'bg-slate-200'}`} />}
 
       {/* Timeline Badge */}
       <div
@@ -817,21 +815,9 @@ function TimelineNode({
           )}
         </div>
 
-        {/* Medicine Name + Tags */}
+        {/* Medicine Name */}
         <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
           <span className="font-semibold text-slate-800 text-xs">{medicine.name}</span>
-          {medicine.sequence_order > 0 && (
-            <span className="med-badge bg-teal-100 text-teal-700 inline-flex items-center gap-0.5">
-              <ListOrdered className="w-2 h-2" />
-              Step {medicine.sequence_order}
-            </span>
-          )}
-          {medicine.depends_on_medicine_id && (
-            <span className="med-badge bg-amber-100 text-amber-700 inline-flex items-center gap-0.5">
-              <GitBranch className="w-2 h-2" />
-              {entry.prerequisiteMedName ? `After ${entry.prerequisiteMedName}` : 'Sequenced'}
-            </span>
-          )}
         </div>
 
         {/* Status Tags */}
@@ -851,13 +837,6 @@ function TimelineNode({
             <span className="text-[9px] font-medium text-med-600 bg-med-50 px-1 py-0.5 rounded">Custom</span>
           )}
         </div>
-
-        {isTaken && slot.taken_at && (
-          <p className="text-[10px] text-emerald-600 mt-0.5 font-medium flex items-center gap-0.5">
-            <Check className="w-2.5 h-2.5" />
-            Logged at {formatTime(slot.taken_at)}
-          </p>
-        )}
 
         {/* Action Buttons for Pending */}
         {isPending && (

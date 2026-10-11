@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pill, Plus, Pencil, ListOrdered, GitBranch, Clock, Calendar } from 'lucide-react';
+import { Pill, Plus, Pencil, Clock, Calendar } from 'lucide-react';
 import type { Medicine, PhaseSchedule } from '@/types';
 import { fetchAllMedicines, fetchAllPhaseSchedules } from '@/lib/dataService';
 
@@ -105,18 +105,6 @@ export function MedicinesView({ onAddMedicine, onEditMedicine }: MedicinesViewPr
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-app-primary" style={{ fontSize: 'var(--font-base)' }}>{med.name}</span>
-                      {med.sequence_order > 0 && (
-                        <span className="med-badge bg-teal-100 text-teal-700 inline-flex items-center gap-0.5">
-                          <ListOrdered className="w-2.5 h-2.5" />
-                          Step {med.sequence_order}
-                        </span>
-                      )}
-                      {med.depends_on_medicine_id && (
-                        <span className="med-badge bg-amber-100 text-amber-700 inline-flex items-center gap-0.5">
-                          <GitBranch className="w-2.5 h-2.5" />
-                          Sequenced
-                        </span>
-                      )}
                     </div>
                     {med.dosage_instructions && (
                       <p className="text-app-muted mt-1 truncate" style={{ fontSize: 'var(--font-small)' }}>{med.dosage_instructions}</p>
