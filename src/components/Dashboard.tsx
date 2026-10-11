@@ -1,14 +1,15 @@
 import { useState, useMemo } from 'react';
-import { Pill, Calendar, CircleCheck as CheckCircle2, Clock, TriangleAlert as AlertTriangle, RotateCcw, Check, ChevronDown, ChevronLeft, ChevronRight, Pencil, Ban, ListOrdered, GitBranch, Rocket, X, Trash2, Tablets } from 'lucide-react';
+import { Pill, Calendar, CircleCheck as CheckCircle2, Clock, TriangleAlert as AlertTriangle, RotateCcw, Check, ChevronDown, ChevronLeft, ChevronRight, Pencil, Ban, ListOrdered, GitBranch, Rocket, X, Trash2, Tablets, ArrowUp, ArrowDown, Timer } from 'lucide-react';
 import type { Medicine, PhaseSchedule, DoseSlot, DailyMedLog } from '@/types';
 import {
   checkInDose,
-  delayDoseSlot,
   skipDoseSlot,
   checkPrerequisiteMet,
   startDayForMedicine,
   editDoseLog,
   resetDayForAllMeds,
+  updatePendingSlotTime,
+  reorderSlot,
 } from '@/lib/dataService';
 import {
   formatDateStr,
@@ -40,8 +41,9 @@ interface PrerequisiteDialogState {
   pendingSchedule: PhaseSchedule | null;
 }
 
-interface EditLogDialogState {
+interface TimePickerDialogState {
   open: boolean;
+  mode: 'start_day' | 'edit_pending' | 'edit_taken';
   slot: DoseSlot | null;
   medicine: Medicine | null;
   schedule: PhaseSchedule | null;
@@ -54,6 +56,7 @@ interface TimelineEntry {
   schedule: PhaseSchedule;
   doseNumberOfTotal: string;
   prerequisiteMedName: string | null;
+  sortIndex: number;
 }
 
 export function Dashboard({
@@ -67,8 +70,6 @@ export function Dashboard({
   onRefresh,
   userId,
 }: DashboardProps) {
-  const [delayMenuSlotId, setDelayMenuSlotId] = useState<string | null>(null);
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const [prereqDialog, setPrereqDialog] = useState<PrerequisiteDialogState>({
     open: false,
     prerequisiteMedName: null,
@@ -81,14 +82,17 @@ export function Dashboard({
   const [showStartDayModal, setShowStartDayModal] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
-  const [editDialog, setEditDialog] = useState<EditLogDialogState>({
+  const [timePicker, setTimePicker] = useState<TimePickerDialogState>({
     open: false,
+    mode: 'start_day',
     slot: null,
     medicine: null,
     schedule: null,
     newTime: '',
   });
   const [editSaving, setEditSaving] = useState(false);
+  const [reordering, setReordering] = useState<string | null>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   const activeMedicines = medicines.filter((m) => !m.is_archived);
 
@@ -123,6 +127,7 @@ export function Dashboard({
           schedule: activeSchedule,
           doseNumberOfTotal: `${slot.dose_number}/${activeSchedule.times_per_day}`,
           prerequisiteMedName: prereqMed ? prereqMed.name : null,
+          sortIndex: 0,
         });
       }
     }
@@ -132,12 +137,27 @@ export function Dashboard({
       if (timeDiff !== 0) return timeDiff;
       return a.slot.dose_number - b.slot.dose_number;
     });
+    entries.forEach((e, i) => { e.sortIndex = i; });
+
     const dayStarted = entries.some((e) => e.slot.status === 'taken') || entries.some((e) => e.medicine.start_trigger_mode === 'fixed_schedule');
 
     return { timeline: entries, totalDoses: total, takenCount: taken, isDayStarted: dayStarted };
   }, [activeMedicines, schedulesMap, slotsMap, selectedDate]);
 
   const progressPercent = totalDoses > 0 ? Math.round((takenCount / totalDoses) * 100) : 0;
+
+  const doCheckIn = async (slot: DoseSlot, medicine: Medicine, schedule: PhaseSchedule) => {
+    try {
+      const { warning, updatedSlot } = await checkInDose(slot, medicine, schedule, userId);
+      playSelectedTone();
+      sendLocalNotification('Dose Checked In', `${medicine.name} - Dose ${slot.dose_number} taken at ${formatTime(updatedSlot.taken_at || updatedSlot.scheduled_time)}`);
+      showToast('Dose checked in', 'success');
+      if (warning) showToast(warning, 'error');
+      onRefresh();
+    } catch {
+      showToast('Failed to check in dose', 'error');
+    }
+  };
 
   const handleCheckIn = async (entry: TimelineEntry) => {
     const { slot, medicine, schedule } = entry;
@@ -165,19 +185,6 @@ export function Dashboard({
     await doCheckIn(slot, medicine, schedule);
   };
 
-  const doCheckIn = async (slot: DoseSlot, medicine: Medicine, schedule: PhaseSchedule) => {
-    try {
-      const { warning, updatedSlot } = await checkInDose(slot, medicine, schedule, userId);
-      playSelectedTone();
-      sendLocalNotification('Dose Checked In', `${medicine.name} - Dose ${slot.dose_number} taken at ${formatTime(updatedSlot.taken_at || updatedSlot.scheduled_time)}`);
-      showToast('Dose checked in', 'success');
-      if (warning) showToast(warning, 'error');
-      onRefresh();
-    } catch {
-      showToast('Failed to check in dose', 'error');
-    }
-  };
-
   const handleOverridePrereq = async () => {
     const { pendingSlot, pendingMedicine, pendingSchedule } = prereqDialog;
     setPrereqDialog({ open: false, prerequisiteMedName: null, waitUntilTime: null, pendingSlot: null, pendingMedicine: null, pendingSchedule: null });
@@ -186,30 +193,17 @@ export function Dashboard({
     }
   };
 
-  const handleDelay = async (entry: TimelineEntry, mins: number) => {
-    try {
-      const { warning } = await delayDoseSlot(entry.slot, mins, entry.medicine);
-      showToast(`Delayed by ${mins >= 60 ? `${mins / 60}h` : `${mins}m`}`, 'success');
-      if (warning) showToast(warning, 'error');
-      setDelayMenuSlotId(null);
-      onRefresh();
-    } catch {
-      showToast('Failed to delay dose', 'error');
-    }
-  };
-
   const handleSkip = async (slotId: string) => {
     try {
       await skipDoseSlot(slotId);
       showToast('Dose skipped', 'info');
-      setDelayMenuSlotId(null);
       onRefresh();
     } catch {
       showToast('Failed to skip dose', 'error');
     }
   };
 
-  const handleStartDay = async (medicine: Medicine) => {
+  const openStartDayPicker = (medicine: Medicine) => {
     const schedules = schedulesMap[medicine.id] || [];
     const activeSchedule = schedules.find(
       (s) => selectedDate >= s.start_date && selectedDate <= s.end_date
@@ -218,34 +212,111 @@ export function Dashboard({
       showToast('No active schedule for this medication', 'error');
       return;
     }
+    const now = new Date();
+    const defaultTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    setTimePicker({
+      open: true,
+      mode: 'start_day',
+      slot: null,
+      medicine,
+      schedule: activeSchedule,
+      newTime: defaultTime,
+    });
+    setShowStartDayModal(false);
+  };
+
+  const handleStartDay = async () => {
+    if (!timePicker.medicine || !timePicker.schedule) return;
+    const { medicine, schedule, newTime } = timePicker;
+    const time12 = convertTo12Hour(newTime);
+    setEditSaving(true);
     try {
-      const { warning } = await startDayForMedicine(medicine, activeSchedule, userId, selectedDate);
-      showToast(`Day started with ${medicine.name}`, 'success');
+      const { warning } = await startDayForMedicine(medicine, schedule, userId, selectedDate, time12);
+      showToast(`Day started with ${medicine.name} at ${formatTime(time12)}`, 'success');
       if (warning) showToast(warning, 'error');
-      setShowStartDayModal(false);
+      setTimePicker({ open: false, mode: 'start_day', slot: null, medicine: null, schedule: null, newTime: '' });
       onRefresh();
     } catch {
       showToast('Failed to start day', 'error');
     }
+    setEditSaving(false);
   };
 
-  const handleEditLog = async (action: 'change_time' | 'revert_pending') => {
-    if (!editDialog.slot || !editDialog.medicine || !editDialog.schedule) return;
+  const openEditPendingTime = (entry: TimelineEntry) => {
+    const time24 = convertTo24Hour(entry.slot.scheduled_time);
+    setTimePicker({
+      open: true,
+      mode: 'edit_pending',
+      slot: entry.slot,
+      medicine: entry.medicine,
+      schedule: entry.schedule,
+      newTime: time24,
+    });
+  };
+
+  const openEditTakenTime = (entry: TimelineEntry) => {
+    const time24 = convertTo24Hour(entry.slot.taken_at || entry.slot.scheduled_time);
+    setTimePicker({
+      open: true,
+      mode: 'edit_taken',
+      slot: entry.slot,
+      medicine: entry.medicine,
+      schedule: entry.schedule,
+      newTime: time24,
+    });
+  };
+
+  const handleTimePickerSave = async () => {
+    if (!timePicker.slot || !timePicker.medicine || !timePicker.schedule) {
+      if (timePicker.mode === 'start_day') {
+        await handleStartDay();
+        return;
+      }
+      return;
+    }
+    const { slot, medicine, schedule, newTime, mode } = timePicker;
+    const time12 = convertTo12Hour(newTime);
     setEditSaving(true);
     try {
-      const { warning } = await editDoseLog(
-        editDialog.slot,
-        action === 'change_time' ? editDialog.newTime : null,
-        action,
-        editDialog.medicine,
-        editDialog.schedule
-      );
-      showToast(action === 'revert_pending' ? 'Dose reverted to pending' : 'Log updated', 'success');
-      if (warning) showToast(warning, 'error');
-      setEditDialog({ open: false, slot: null, medicine: null, schedule: null, newTime: '' });
+      if (mode === 'edit_pending') {
+        const { warning } = await updatePendingSlotTime(slot, time12, medicine, schedule);
+        showToast('Dose time updated', 'success');
+        if (warning) showToast(warning, 'error');
+      } else if (mode === 'edit_taken') {
+        const { warning } = await editDoseLog(slot, time12, 'change_time', medicine, schedule);
+        showToast('Log updated', 'success');
+        if (warning) showToast(warning, 'error');
+      }
+      setTimePicker({ open: false, mode: 'start_day', slot: null, medicine: null, schedule: null, newTime: '' });
       onRefresh();
     } catch {
-      showToast('Failed to update log', 'error');
+      showToast('Failed to update time', 'error');
+    }
+    setEditSaving(false);
+  };
+
+  const handleReorder = async (entry: TimelineEntry, direction: 'up' | 'down') => {
+    setReordering(entry.slot.id);
+    try {
+      await reorderSlot(entry.slot, direction, entry.medicine, entry.schedule);
+      showToast(direction === 'up' ? 'Moved up' : 'Moved down', 'success');
+      onRefresh();
+    } catch {
+      showToast('Failed to reorder', 'error');
+    }
+    setReordering(null);
+  };
+
+  const handleRevertPending = async () => {
+    if (!timePicker.slot || !timePicker.medicine || !timePicker.schedule) return;
+    setEditSaving(true);
+    try {
+      await editDoseLog(timePicker.slot, null, 'revert_pending', timePicker.medicine, timePicker.schedule);
+      showToast('Dose reverted to pending', 'success');
+      setTimePicker({ open: false, mode: 'start_day', slot: null, medicine: null, schedule: null, newTime: '' });
+      onRefresh();
+    } catch {
+      showToast('Failed to revert dose', 'error');
     }
     setEditSaving(false);
   };
@@ -269,18 +340,12 @@ export function Dashboard({
     onDateChange(d.toISOString().split('T')[0]);
   };
 
-  const openEditDialog = (entry: TimelineEntry) => {
-    const time24 = convertTo24Hour(entry.slot.taken_at || entry.slot.scheduled_time);
-    setEditDialog({
-      open: true,
-      slot: entry.slot,
-      medicine: entry.medicine,
-      schedule: entry.schedule,
-      newTime: time24,
-    });
-  };
-
   const isToday = selectedDate === new Date().toISOString().split('T')[0];
+
+  const timePickerTitle =
+    timePicker.mode === 'start_day' ? 'When was Dose #1 taken?'
+    : timePicker.mode === 'edit_pending' ? 'Edit Scheduled Time'
+    : 'Edit Logged Time';
 
   return (
     <div className="max-w-2xl mx-auto px-2.5 pt-2 pb-24">
@@ -449,15 +514,16 @@ export function Dashboard({
                 key={entry.slot.id}
                 entry={entry}
                 isLast={idx === timeline.length - 1}
-                delayMenuOpen={delayMenuSlotId === entry.slot.id}
+                isFirst={idx === 0}
                 checkingPrereq={checkingPrereq}
-                onToggleDelayMenu={() =>
-                  setDelayMenuSlotId(delayMenuSlotId === entry.slot.id ? null : entry.slot.id)
-                }
                 onCheckIn={() => handleCheckIn(entry)}
-                onDelay={(mins) => handleDelay(entry, mins)}
                 onSkip={() => handleSkip(entry.slot.id)}
-                onEdit={() => openEditDialog(entry)}
+                onEditPending={() => openEditPendingTime(entry)}
+                onEditTaken={() => openEditTakenTime(entry)}
+                onReorder={(dir) => handleReorder(entry, dir)}
+                canMoveUp={idx > 0 && timeline[idx - 1].slot.status === 'pending'}
+                canMoveDown={idx < timeline.length - 1 && timeline[idx + 1].slot.status === 'pending'}
+                reordering={reordering === entry.slot.id}
               />
             ))}
           </div>
@@ -514,7 +580,7 @@ export function Dashboard({
               return (
                 <button
                   key={med.id}
-                  onClick={() => handleStartDay(med)}
+                  onClick={() => openStartDayPicker(med)}
                   disabled={isDependentWaiting}
                   className="w-full flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:border-med-300 hover:bg-med-50/50 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
                 >
@@ -561,55 +627,76 @@ export function Dashboard({
         </DialogOverlay>
       )}
 
-      {/* Edit Log Dialog */}
-      {editDialog.open && editDialog.slot && editDialog.medicine && (
-        <DialogOverlay onClose={() => setEditDialog({ ...editDialog, open: false })}>
+      {/* Time Picker Dialog */}
+      {timePicker.open && (
+        <DialogOverlay onClose={() => setTimePicker({ ...timePicker, open: false })}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold text-slate-800">Edit Dose Log</h3>
-            <button onClick={() => setEditDialog({ ...editDialog, open: false })} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">
+            <div className="flex items-center gap-2">
+              <Timer className="w-5 h-5 text-med-600" />
+              <h3 className="text-lg font-bold text-slate-800">{timePickerTitle}</h3>
+            </div>
+            <button onClick={() => setTimePicker({ ...timePicker, open: false })} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">
               <X className="w-5 h-5 text-slate-400" />
             </button>
           </div>
 
-          <div className="bg-slate-50 rounded-xl p-3 mb-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Pill className="w-4 h-4 text-med-600" />
-              <span className="font-semibold text-slate-800 text-sm">{editDialog.medicine.name}</span>
+          {timePicker.medicine && (
+            <div className="bg-slate-50 rounded-xl p-3 mb-4">
+              <div className="flex items-center gap-2 mb-1">
+                <Pill className="w-4 h-4 text-med-600" />
+                <span className="font-semibold text-slate-800 text-sm">{timePicker.medicine.name}</span>
+              </div>
+              {timePicker.mode === 'start_day' && (
+                <p className="text-xs text-slate-500">
+                  Set the actual time you took Dose #1. The rest of today's schedule will be calculated from this time.
+                </p>
+              )}
+              {timePicker.mode === 'edit_pending' && timePicker.slot && (
+                <p className="text-xs text-slate-500">
+                  Dose #{timePicker.slot.dose_number} &middot; Currently at {formatTime(timePicker.slot.scheduled_time)}
+                </p>
+              )}
+              {timePicker.mode === 'edit_taken' && timePicker.slot && (
+                <p className="text-xs text-slate-500">
+                  Dose #{timePicker.slot.dose_number} &middot; Scheduled at {formatTime(timePicker.slot.scheduled_time)}
+                  {timePicker.slot.taken_at && ` &middot; Logged at ${formatTime(timePicker.slot.taken_at)}`}
+                </p>
+              )}
             </div>
-            <p className="text-xs text-slate-500">
-              Dose #{editDialog.slot.dose_number} &middot; Scheduled at {formatTime(editDialog.slot.scheduled_time)}
-              {editDialog.slot.taken_at && ` &middot; Logged at ${formatTime(editDialog.slot.taken_at)}`}
-            </p>
-          </div>
+          )}
 
           <div className="mb-4">
-            <label className="block text-sm font-medium text-slate-700 mb-2">Change Timestamp</label>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              {timePicker.mode === 'start_day' ? 'Dose #1 Time' : timePicker.mode === 'edit_pending' ? 'New Scheduled Time' : 'Actual Taken Time'}
+            </label>
             <input
               type="time"
-              value={editDialog.newTime}
-              onChange={(e) => setEditDialog({ ...editDialog, newTime: e.target.value })}
-              className="input-field text-sm"
+              value={timePicker.newTime}
+              onChange={(e) => setTimePicker({ ...timePicker, newTime: e.target.value })}
+              className="input-field text-center text-lg font-bold"
+              autoFocus
             />
-            <p className="text-xs text-slate-400 mt-1">Update when this dose was actually taken.</p>
           </div>
 
           <div className="space-y-2">
             <button
-              onClick={() => handleEditLog('change_time')}
+              onClick={handleTimePickerSave}
               disabled={editSaving}
               className="w-full bg-med-600 text-white rounded-xl py-3 text-sm font-semibold flex items-center justify-center gap-2 hover:bg-med-700 transition-colors active:scale-[0.98] disabled:opacity-60"
             >
               <Check className="w-4 h-4" />
-              {editSaving ? 'Saving...' : 'Update Timestamp'}
+              {editSaving ? 'Saving...' : timePicker.mode === 'start_day' ? 'Start Schedule' : 'Update Time'}
             </button>
-            <button
-              onClick={() => handleEditLog('revert_pending')}
-              disabled={editSaving}
-              className="w-full bg-white text-amber-600 border-2 border-amber-400 rounded-xl py-3 text-sm font-semibold flex items-center justify-center gap-2 hover:bg-amber-50 transition-colors active:scale-[0.98] disabled:opacity-60"
-            >
-              <RotateCcw className="w-4 h-4" />
-              Unmark / Revert to Pending
-            </button>
+            {timePicker.mode === 'edit_taken' && (
+              <button
+                onClick={handleRevertPending}
+                disabled={editSaving}
+                className="w-full bg-white text-amber-600 border-2 border-amber-400 rounded-xl py-3 text-sm font-semibold flex items-center justify-center gap-2 hover:bg-amber-50 transition-colors active:scale-[0.98] disabled:opacity-60"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Unmark / Revert to Pending
+              </button>
+            )}
           </div>
         </DialogOverlay>
       )}
@@ -631,25 +718,30 @@ function DialogOverlay({ children, onClose }: { children: React.ReactNode; onClo
 interface TimelineNodeProps {
   entry: TimelineEntry;
   isLast: boolean;
-  delayMenuOpen: boolean;
+  isFirst: boolean;
   checkingPrereq: boolean;
-  onToggleDelayMenu: () => void;
   onCheckIn: () => void;
-  onDelay: (mins: number) => void;
   onSkip: () => void;
-  onEdit: () => void;
+  onEditPending: () => void;
+  onEditTaken: () => void;
+  onReorder: (dir: 'up' | 'down') => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  reordering: boolean;
 }
 
 function TimelineNode({
   entry,
   isLast,
-  delayMenuOpen,
   checkingPrereq,
-  onToggleDelayMenu,
   onCheckIn,
-  onDelay,
   onSkip,
-  onEdit,
+  onEditPending,
+  onEditTaken,
+  onReorder,
+  canMoveUp,
+  canMoveDown,
+  reordering,
 }: TimelineNodeProps) {
   const { slot, medicine, doseNumberOfTotal } = entry;
   const isTaken = slot.status === 'taken';
@@ -687,7 +779,7 @@ function TimelineNode({
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        {/* Time + Dose Number */}
+        {/* Time + Dose Number + Reorder */}
         <div className="flex items-baseline gap-1.5 flex-wrap">
           <span className="text-xs font-bold text-slate-700 tabular-nums">
             {isTaken && slot.taken_at ? formatTime(slot.taken_at) : formatTime(slot.scheduled_time)}
@@ -702,6 +794,26 @@ function TimelineNode({
             <span className="text-[9px] font-medium text-amber-600 bg-amber-50 px-1 py-0.5 rounded">
               {slot.delay_text}
             </span>
+          )}
+
+          {/* Reorder handles for pending slots */}
+          {isPending && (
+            <div className="flex items-center gap-0.5 ml-auto">
+              <button
+                onClick={() => onReorder('up')}
+                disabled={!canMoveUp || reordering}
+                className="w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-med-600 hover:bg-med-50 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+              >
+                <ArrowUp className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => onReorder('down')}
+                disabled={!canMoveDown || reordering}
+                className="w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-med-600 hover:bg-med-50 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+              >
+                <ArrowDown className="w-3 h-3" />
+              </button>
+            </div>
           )}
         </div>
 
@@ -749,7 +861,7 @@ function TimelineNode({
 
         {/* Action Buttons for Pending */}
         {isPending && (
-          <div className="flex items-center gap-1.5 mt-1.5 relative">
+          <div className="flex items-center gap-1.5 mt-1.5">
             <button
               onClick={onCheckIn}
               disabled={checkingPrereq}
@@ -764,37 +876,26 @@ function TimelineNode({
                 </>
               )}
             </button>
-            <div className="relative">
-              <button
-                onClick={onToggleDelayMenu}
-                className="bg-white text-amber-600 border-2 border-amber-400 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold flex items-center gap-0.5 hover:bg-amber-50 transition-all active:scale-95"
-              >
-                <Clock className="w-3 h-3" />
-                +30m
-              </button>
-              {delayMenuOpen && (
-                <div className="absolute top-9 left-0 bg-white rounded-xl border border-slate-200 shadow-lg p-1.5 z-20 animate-slide-down min-w-[130px]">
-                  <DelayMenuItem label="+15 min" onClick={() => onDelay(15)} />
-                  <DelayMenuItem label="+30 min" onClick={() => onDelay(30)} />
-                  <DelayMenuItem label="+1 hour" onClick={() => onDelay(60)} />
-                  <DelayMenuItem label="+2 hours" onClick={() => onDelay(120)} />
-                  <div className="h-px bg-slate-100 my-1" />
-                  <button
-                    onClick={onSkip}
-                    className="w-full text-left px-2.5 py-1.5 text-[11px] font-medium text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                  >
-                    Skip Dose
-                  </button>
-                </div>
-              )}
-            </div>
+            <button
+              onClick={onEditPending}
+              className="bg-white text-slate-600 border-2 border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold flex items-center gap-0.5 hover:border-med-300 hover:text-med-600 transition-all active:scale-95"
+            >
+              <Clock className="w-3 h-3" />
+              Edit Time
+            </button>
+            <button
+              onClick={onSkip}
+              className="text-red-400 hover:text-red-500 hover:bg-red-50 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition-colors"
+            >
+              Skip
+            </button>
           </div>
         )}
 
         {/* Edit button for Taken */}
         {isTaken && (
           <button
-            onClick={onEdit}
+            onClick={onEditTaken}
             className="inline-flex items-center gap-1 mt-1 text-[11px] font-medium text-slate-400 hover:text-med-600 transition-colors"
           >
             <Pencil className="w-3 h-3" />
@@ -803,17 +904,6 @@ function TimelineNode({
         )}
       </div>
     </div>
-  );
-}
-
-function DelayMenuItem({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="w-full text-left px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
-    >
-      {label}
-    </button>
   );
 }
 
@@ -831,4 +921,11 @@ function convertTo24Hour(timeStr: string): string {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
   }
   return cleaned;
+}
+
+function convertTo12Hour(time24: string): string {
+  const [h, m] = time24.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const displayH = h % 12 || 12;
+  return `${displayH}:${m.toString().padStart(2, '0')} ${period}`;
 }

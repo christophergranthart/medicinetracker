@@ -310,9 +310,10 @@ export async function checkInDose(
   slot: DoseSlot,
   medicine: Medicine,
   schedule: PhaseSchedule,
-  userId: string
+  userId: string,
+  customTime?: string
 ): Promise<{ updatedSlot: DoseSlot; warning: string | null }> {
-  const now = getCurrentTimeStr();
+  const now = customTime || getCurrentTimeStr();
   const { data: updated, error } = await supabase
     .from('dose_slots')
     .update({
@@ -668,7 +669,8 @@ export async function startDayForMedicine(
   medicine: Medicine,
   schedule: PhaseSchedule,
   userId: string,
-  date: string
+  date: string,
+  customTime?: string
 ): Promise<{ warning: string | null }> {
   const log = await fetchDailyLog(medicine.id, date);
   if (!log) throw new Error('No daily log found. Please refresh and try again.');
@@ -678,13 +680,13 @@ export async function startDayForMedicine(
     throw new Error('First dose already taken for today.');
   }
 
-  const now = getCurrentTimeStr();
+  const firstDoseTime = customTime || getCurrentTimeStr();
 
   await supabase.from('dose_slots').delete().eq('daily_log_id', log.id);
 
   await supabase
     .from('daily_med_logs')
-    .update({ first_dose_time: now, status: 'in_progress' })
+    .update({ first_dose_time: firstDoseTime, status: 'in_progress' })
     .eq('id', log.id);
 
   const { data: dose1, error: dose1Error } = await supabase
@@ -693,10 +695,10 @@ export async function startDayForMedicine(
       daily_log_id: log.id,
       medicine_id: medicine.id,
       dose_number: 1,
-      scheduled_time: now,
-      original_time: now,
+      scheduled_time: firstDoseTime,
+      original_time: firstDoseTime,
       status: 'taken',
-      taken_at: now,
+      taken_at: firstDoseTime,
       checked_in_by_user_id: userId,
       is_anchored: false,
       is_custom_added: false,
@@ -713,7 +715,7 @@ export async function startDayForMedicine(
     const otherSlotsCtx = await fetchAllDoseSlotsContextForDate(date, medicine.id);
     const latest = parseTimeToMinutes(medicine.latest_allowed);
     const minIntervalMins = (medicine.min_interval_hours || 3) * 60;
-    const firstDoseMin = parseTimeToMinutes(now);
+    const firstDoseMin = parseTimeToMinutes(firstDoseTime);
     const window = latest - firstDoseMin;
     const equalGap = remainingCount > 0 ? window / remainingCount : 0;
     // Backward planning: flex below min interval to fit all doses before cutoff
@@ -758,7 +760,7 @@ export async function startDayForMedicine(
       .eq('id', log.id);
   }
 
-  await cascadeActivateDependents(medicine, now, date);
+  await cascadeActivateDependents(medicine, firstDoseTime, date);
 
   return { warning };
 }
@@ -923,6 +925,104 @@ function minutesToTimeStrForExport(minutes: number): string {
   let displayHours = hours % 12;
   if (displayHours === 0) displayHours = 12;
   return `${displayHours}:${mins.toString().padStart(2, '0')} ${period}`;
+}
+
+export async function updatePendingSlotTime(
+  slot: DoseSlot,
+  newTime: string,
+  medicine: Medicine,
+  schedule: PhaseSchedule
+): Promise<{ warning: string | null }> {
+  const { error } = await supabase
+    .from('dose_slots')
+    .update({
+      scheduled_time: newTime,
+      delay_text: getDelayText(slot.original_time, newTime),
+    })
+    .eq('id', slot.id);
+  if (error) throw error;
+
+  const allSlots = await fetchDoseSlots(slot.daily_log_id);
+  const { data: log } = await supabase
+    .from('daily_med_logs')
+    .select('*')
+    .eq('id', slot.daily_log_id)
+    .single();
+  if (!log) throw new Error('Daily log not found');
+
+  let warning: string | null = null;
+  const pendingSlots = allSlots.filter((s) => s.status === 'pending' && s.id !== slot.id);
+  if (pendingSlots.length > 0 && log.first_dose_time) {
+    const otherSlotsCtx = await fetchAllDoseSlotsContextForDate(log.date, medicine.id);
+    const allSlotsWithUpdate = allSlots.map((s) =>
+      s.id === slot.id ? { ...s, scheduled_time: newTime } : s
+    );
+    const updates = recalculateRemainingSlots(medicine, schedule, allSlotsWithUpdate, otherSlotsCtx, log.first_dose_time);
+    for (const update of updates) {
+      if (update.id === slot.id) continue;
+      const updateData: Record<string, unknown> = { scheduled_time: update.newTime };
+      const origSlot = allSlots.find((s) => s.id === update.id);
+      if (origSlot) {
+        updateData.delay_text = getDelayText(origSlot.original_time, update.newTime);
+      }
+      if (update.clamped) warning = 'Cutoff reached. Doses spaced equally to fit before cutoff.';
+      await supabase.from('dose_slots').update(updateData).eq('id', update.id);
+    }
+  }
+
+  await recascadeDependents(medicine, log.date);
+  return { warning };
+}
+
+export async function reorderSlot(
+  slot: DoseSlot,
+  direction: 'up' | 'down',
+  medicine: Medicine,
+  schedule: PhaseSchedule
+): Promise<{ warning: string | null }> {
+  const allSlots = await fetchDoseSlots(slot.daily_log_id);
+  const pendingSlots = allSlots.filter((s) => s.status === 'pending');
+  const sortedPending = [...pendingSlots].sort(
+    (a, b) => parseTimeToMinutes(a.scheduled_time) - parseTimeToMinutes(b.scheduled_time)
+  );
+
+  const currentIdx = sortedPending.findIndex((s) => s.id === slot.id);
+  if (currentIdx === -1) return { warning: null };
+
+  const swapIdx = direction === 'up' ? currentIdx - 1 : currentIdx + 1;
+  if (swapIdx < 0 || swapIdx >= sortedPending.length) return { warning: null };
+
+  const swapSlot = sortedPending[swapIdx];
+  const currentTime = parseTimeToMinutes(slot.scheduled_time);
+  const swapTime = parseTimeToMinutes(swapSlot.scheduled_time);
+
+  const newCurrentTime = minutesToTimeStrForExport(swapTime);
+  const newSwapTime = minutesToTimeStrForExport(currentTime);
+
+  await supabase
+    .from('dose_slots')
+    .update({
+      scheduled_time: newCurrentTime,
+      delay_text: getDelayText(slot.original_time, newCurrentTime),
+    })
+    .eq('id', slot.id);
+
+  await supabase
+    .from('dose_slots')
+    .update({
+      scheduled_time: newSwapTime,
+      delay_text: getDelayText(swapSlot.original_time, newSwapTime),
+    })
+    .eq('id', swapSlot.id);
+
+  const { data: log } = await supabase
+    .from('daily_med_logs')
+    .select('date')
+    .eq('id', slot.daily_log_id)
+    .single();
+  if (log) await recascadeDependents(medicine, log.date);
+
+  return { warning: null };
 }
 
 export async function editDoseLog(

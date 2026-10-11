@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Pill, ChevronRight, ChevronLeft, Plus, Trash2, Lock, Anchor, Archive, TriangleAlert as AlertTriangle, Clock, Ban, Calendar, ListOrdered, GitBranch, Rocket, CalendarDays } from 'lucide-react';
+import { Pill, ChevronRight, ChevronLeft, Plus, Trash2, Anchor, Archive, TriangleAlert as AlertTriangle, Clock, Ban, Calendar, ListOrdered, GitBranch, Rocket, CalendarDays } from 'lucide-react';
 import type {
   Medicine,
   PhaseSchedule,
   BlackoutWindow,
-  InterMedBuffer,
   FixedTimeSlot,
   ScheduleType,
   StartTriggerMode,
@@ -75,9 +74,7 @@ export function MedicineForm({ isOpen, onClose, editingMedicine, onSaved }: Medi
   const [earliestAllowed, setEarliestAllowed] = useState('07:00');
   const [latestAllowed, setLatestAllowed] = useState('21:00');
   const [minIntervalHours, setMinIntervalHours] = useState('3.0');
-  const [interMedBuffer, setInterMedBuffer] = useState('60');
   const [blackoutWindows, setBlackoutWindows] = useState<BlackoutWindow[]>([]);
-  const [interMedBuffers, setInterMedBuffers] = useState<InterMedBuffer[]>([]);
   const [sequenceOrder, setSequenceOrder] = useState(1);
   const [dependsOnMedicineId, setDependsOnMedicineId] = useState<string | null>(null);
   const [minGapAfterPrerequisite, setMinGapAfterPrerequisite] = useState('60');
@@ -106,9 +103,7 @@ export function MedicineForm({ isOpen, onClose, editingMedicine, onSaved }: Medi
         setEarliestAllowed(timeToInputValue(editingMedicine.earliest_allowed || '07:00 AM'));
         setLatestAllowed(timeToInputValue(editingMedicine.latest_allowed || '09:00 PM'));
         setMinIntervalHours(String(editingMedicine.min_interval_hours || 3.0));
-        setInterMedBuffer(String(editingMedicine.inter_med_default_buffer_mins || 60));
         setBlackoutWindows(editingMedicine.blackout_windows || []);
-        setInterMedBuffers(editingMedicine.inter_med_buffers || []);
         setSequenceOrder(editingMedicine.sequence_order ?? 1);
         setDependsOnMedicineId(editingMedicine.depends_on_medicine_id ?? null);
         setMinGapAfterPrerequisite(String(editingMedicine.min_gap_after_prerequisite_mins ?? 60));
@@ -135,9 +130,7 @@ export function MedicineForm({ isOpen, onClose, editingMedicine, onSaved }: Medi
         setEarliestAllowed('07:00');
         setLatestAllowed('21:00');
         setMinIntervalHours('3.0');
-        setInterMedBuffer('60');
         setBlackoutWindows([]);
-        setInterMedBuffers([]);
         setSequenceOrder(1);
         setDependsOnMedicineId(null);
         setMinGapAfterPrerequisite('60');
@@ -174,33 +167,6 @@ export function MedicineForm({ isOpen, onClose, editingMedicine, onSaved }: Medi
 
   const removeBlackoutWindow = (id: string) => {
     setBlackoutWindows(blackoutWindows.filter((w) => w.id !== id));
-  };
-
-  const addInterMedBuffer = () => {
-    if (otherMedicines.length === 0) {
-      showToast('Add another medicine first to set inter-medication rules', 'info');
-      return;
-    }
-    setInterMedBuffers([
-      ...interMedBuffers,
-      {
-        id: genId(),
-        target_medicine_id: otherMedicines[0].id,
-        buffer_before_mins: 60,
-        buffer_after_mins: 60,
-        label: '',
-      },
-    ]);
-  };
-
-  const updateInterMedBuffer = (id: string, field: keyof InterMedBuffer, value: string | number) => {
-    setInterMedBuffers(
-      interMedBuffers.map((b) => (b.id === id ? { ...b, [field]: value } : b))
-    );
-  };
-
-  const removeInterMedBuffer = (id: string) => {
-    setInterMedBuffers(interMedBuffers.filter((b) => b.id !== id));
   };
 
   const addPhase = () => {
@@ -288,9 +254,9 @@ export function MedicineForm({ isOpen, onClose, editingMedicine, onSaved }: Medi
         earliest_allowed: inputValueToTime(earliestAllowed),
         latest_allowed: inputValueToTime(latestAllowed),
         min_interval_hours: parseFloat(minIntervalHours) || 3.0,
-        inter_med_default_buffer_mins: parseInt(interMedBuffer) || 60,
+        inter_med_default_buffer_mins: 60,
         blackout_windows: blackoutWindows,
-        inter_med_buffers: interMedBuffers,
+        inter_med_buffers: [],
         sequence_order: sequenceOrder,
         depends_on_medicine_id: dependsOnMedicineId,
         min_gap_after_prerequisite_mins: parseInt(minGapAfterPrerequisite) || 60,
@@ -433,33 +399,18 @@ export function MedicineForm({ isOpen, onClose, editingMedicine, onSaved }: Medi
               <Clock className="w-4 h-4 text-med-600" />
               <h4 className="text-sm font-bold text-slate-700">Dose Timing & Separation</h4>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
-                  Min gap between doses (hours)
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0.5"
-                  value={minIntervalHours}
-                  onChange={(e) => setMinIntervalHours(e.target.value)}
-                  className="input-field text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
-                  Gap from other meds (mins)
-                </label>
-                <input
-                  type="number"
-                  step="15"
-                  min="0"
-                  value={interMedBuffer}
-                  onChange={(e) => setInterMedBuffer(e.target.value)}
-                  className="input-field text-sm"
-                />
-              </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                Min gap between doses (hours)
+              </label>
+              <input
+                type="number"
+                step="0.5"
+                min="0.5"
+                value={minIntervalHours}
+                onChange={(e) => setMinIntervalHours(e.target.value)}
+                className="input-field text-sm"
+              />
             </div>
           </div>
 
@@ -507,76 +458,6 @@ export function MedicineForm({ isOpen, onClose, editingMedicine, onSaved }: Medi
             >
               <Plus className="w-4 h-4" />
               Add Window
-            </button>
-          </div>
-
-          {/* Inter-Medication Buffers */}
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Pill className="w-4 h-4 text-med-600" />
-              <h4 className="text-sm font-bold text-slate-700">Inter-Medication Separation Rules</h4>
-            </div>
-            {interMedBuffers.map((b) => (
-              <div key={b.id} className="space-y-1.5 bg-med-50/30 rounded-xl p-2">
-                <div className="flex items-center gap-2">
-                  <select
-                    value={b.target_medicine_id}
-                    onChange={(e) => updateInterMedBuffer(b.id, 'target_medicine_id', e.target.value)}
-                    className="input-field text-xs py-2 flex-1"
-                  >
-                    {otherMedicines.map((m) => (
-                      <option key={m.id} value={m.id}>{m.name}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => removeInterMedBuffer(b.id)}
-                    className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-red-50 text-red-400 flex-shrink-0"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <label className="block text-[10px] text-slate-500 mb-0.5">Before (mins)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="15"
-                      value={b.buffer_before_mins}
-                      onChange={(e) => updateInterMedBuffer(b.id, 'buffer_before_mins', parseInt(e.target.value) || 0)}
-                      className="input-field text-xs py-2"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-[10px] text-slate-500 mb-0.5">After (mins)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="15"
-                      value={b.buffer_after_mins}
-                      onChange={(e) => updateInterMedBuffer(b.id, 'buffer_after_mins', parseInt(e.target.value) || 0)}
-                      className="input-field text-xs py-2"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-[10px] text-slate-500 mb-0.5">Label</label>
-                    <input
-                      type="text"
-                      value={b.label}
-                      onChange={(e) => updateInterMedBuffer(b.id, 'label', e.target.value)}
-                      placeholder="Optional"
-                      className="input-field text-xs py-2"
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
-            <button
-              onClick={addInterMedBuffer}
-              className="w-full border-2 border-dashed border-slate-200 rounded-xl py-2.5 text-sm font-medium text-slate-500 hover:border-med-300 hover:text-med-600 transition-colors flex items-center justify-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              Add Medication Buffer
             </button>
           </div>
 
