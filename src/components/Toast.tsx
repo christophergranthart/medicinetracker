@@ -39,15 +39,16 @@ export function ToastContainer() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className="pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-2xl shadow-lg animate-slide-down max-w-sm w-full bg-white border border-slate-200"
+          className="pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-2xl shadow-lg animate-slide-down max-w-sm w-full border"
+          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-default)' }}
         >
-          {toast.type === 'success' && <div className="w-8 h-8 bg-emerald-50 rounded-xl flex items-center justify-center flex-shrink-0"><CheckCircle2 className="w-5 h-5 text-emerald-500" /></div>}
-          {toast.type === 'error' && <div className="w-8 h-8 bg-red-50 rounded-xl flex items-center justify-center flex-shrink-0"><AlertTriangle className="w-5 h-5 text-red-500" /></div>}
-          {toast.type === 'info' && <div className="w-8 h-8 bg-med-50 rounded-xl flex items-center justify-center flex-shrink-0"><Info className="w-5 h-5 text-med-500" /></div>}
-          <span className="text-slate-700 text-sm font-medium flex-1">{toast.message}</span>
+          {toast.type === 'success' && <div className="w-8 h-8 bg-emerald-50 dark:bg-emerald-900/30 rounded-xl flex items-center justify-center flex-shrink-0"><CheckCircle2 className="w-5 h-5 text-emerald-500" /></div>}
+          {toast.type === 'error' && <div className="w-8 h-8 bg-red-50 dark:bg-red-900/30 rounded-xl flex items-center justify-center flex-shrink-0"><AlertTriangle className="w-5 h-5 text-red-500" /></div>}
+          {toast.type === 'info' && <div className="w-8 h-8 bg-med-50 dark:bg-med-900/30 rounded-xl flex items-center justify-center flex-shrink-0"><Info className="w-5 h-5 text-med-500" /></div>}
+          <span className="text-app-primary font-medium flex-1" style={{ fontSize: 'var(--font-small)' }}>{toast.message}</span>
           <button
             onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}
-            className="text-slate-400 hover:text-slate-600 transition-colors"
+            className="text-app-faint hover:text-app-muted transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
